@@ -97,4 +97,25 @@ class Reply
     notifications.delete_all
     delete_notifiaction_mentions
   end
+
+  #todo hot_topic
+  def self.get_hot_topic_by_offset_today(day_num =0)
+    map = %| function(){emit(this.topic_id, this.created_at.getDate())} |
+    reduce = %| function(key, values){
+                  var dayH={d0: 0, d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0};
+                  var today = (new Date()).getDate();
+                  for (d in values){
+                      dayH['d'+(today-values[d])] +=1
+                  }
+                 return dayH;
+                }
+            |
+    # offset_today(day_num)
+    map_reduce(map, reduce).out(inline: true)
+  end
+
+  #todo hot_topic
+  scope :offset_today, ->(day_num=0){
+    where(:created_at.lt => Date.today + (1 + day_num).days, :created_at.gt => Date.today + day_num.days)
+  }
 end
