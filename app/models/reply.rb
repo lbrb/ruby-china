@@ -99,23 +99,46 @@ class Reply
   end
 
   #todo hot_topic
-  def self.get_hot_topic_by_offset_today(day_num =0)
-    map = %| function(){emit(this.topic_id, this.created_at.getDate())} |
-    reduce = %| function(key, values){
-                  var dayH={d0: 0, d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0};
-                  var today = (new Date()).getDate();
-                  for (d in values){
-                      dayH['d'+(today-values[d])] +=1
-                  }
-                 return dayH;
+  #return like [{"_id"=>1.0, "value"=>1.0}, {"_id"=>2.0, "value"=>1.0}, {"_id"=>3.0, "value"=>14.0}], _id是topic.id, value为加权score
+  def self.get_week_hot_topic_from_mongodb
+    map = ' function(){
+              emit(this.topic_id, this.created_at);
+            }
+           '
+    reduce = ' function(key, values){
+                  var score = 0;
+                  var v;
+                  var off_days;
+                  var now = new Date();
+                  if(values.length == undefined){
+                      off_days = parseInt((now-values)/3600000/24);
+                      score += (7-off_days);
+                  }else{
+                    for(v in values){
+                      off_days = parseInt((now-values[v])/3600000/24);
+                      score += (7-off_days);
+                    }
+                  };
+                  return score;
                 }
-            |
-    # offset_today(day_num)
-    map_reduce(map, reduce).out(inline: true)
+              '
+    finalize = %| function(key, value){
+                    if(typeof value == 'object')
+                      value = 1
+                    return value;
+                  }
+                |
+    map_reduce(map, reduce).finalize(finalize).out(inline: true)
   end
 
-  #todo hot_topic
-  scope :offset_today, ->(day_num=0){
-    where(:created_at.lt => Date.today + (1 + day_num).days, :created_at.gt => Date.today + day_num.days)
-  }
+  #
+  def self.get_week_hot_topic
+      unless $redis.exists 'week_hot_topic'
+        topic_with_score = self.get_week_hot_topic_from_mongodb.map{|reply| [reply['values'], reply['_id']]}
+        $redis.zadd 'week_hot_topic', topic_with_score
+        $redis.expire 'week_hot_topic', 3600
+      end
+    hot_topic_ids = $redis.zrevrange 'week_hot_topic', 0, -1
+    Topic.find(hot_topic_ids).to_a
+  end
 end
