@@ -33,24 +33,25 @@ class Reply
   validate do
     ban_words = (SiteConfig.ban_words_on_reply || "").split("\n").collect { |word| word.strip }
     if self.body.strip.downcase.in?(ban_words)
-      self.errors.add(:body,"请勿回复无意义的内容，如你想收藏或赞这篇帖子，请用帖子后面的功能。")
+      self.errors.add(:body, "请勿回复无意义的内容，如你想收藏或赞这篇帖子，请用帖子后面的功能。")
     end
   end
 
   after_save :update_parent_topic
+
   def update_parent_topic
     topic.update_last_reply(self)
   end
 
   # 删除的时候也要更新 Topic 的 updated_at 以便清理缓存
   after_destroy :update_parent_topic_updated_at
+
   def update_parent_topic_updated_at
     if not self.topic.blank?
       self.topic.update_deleted_last_reply(self)
       true
     end
   end
-
 
 
   after_create do
@@ -98,47 +99,71 @@ class Reply
     delete_notifiaction_mentions
   end
 
-  #todo hot_topic
-  #return like [{"_id"=>1.0, "value"=>1.0}, {"_id"=>2.0, "value"=>1.0}, {"_id"=>3.0, "value"=>14.0}], _id是topic.id, value为加权score
-  def self.get_week_hot_topic_from_mongodb
+  #从mongodb中取出特定时间段内(特定时间段可以自己设定)，每个topic的加权score.
+  #返回值 like [{"_id"=>1.0, "value"=>1.0}, {"_id"=>2.0, "value"=>1.0}, {"_id"=>3.0, "value"=>14.0}], _id是topic.id, value为加权score
+  #divisor:除数，根据回复创建时间与当前时间的毫秒数，算出该条回复属于哪段时间
+  #period_length: 周期长度，例如一周热门，period_length = 7, 24小时热门，period_length =24
+  def self.get_hot_topic_from_mongodb(period)
+    case period
+      when 'week' then
+        divisor = 3600000*24
+        period_length = 7
+      when 'day' then
+        divisor = 3600000
+        period_length = 24
+      else
+        divisor = 1
+        period_length = 1
+    end
     map = ' function(){
               emit(this.topic_id, this.created_at);
             }
            '
-    reduce = ' function(key, values){
+    #处理map后values为数组的情况
+    reduce = %| function(key, values){
                   var score = 0;
                   var v;
                   var off_days;
                   var now = new Date();
-                  if(values.length == undefined){
-                      off_days = parseInt((now-values)/3600000/24);
-                      score += (7-off_days);
-                  }else{
-                    for(v in values){
-                      off_days = parseInt((now-values[v])/3600000/24);
-                      score += (7-off_days);
-                    }
-                  };
+                  for(v in values){
+                    off_days = parseInt((now-values[v])/#{divisor});
+                    score += (#{period_length}-off_days);
+                  }
                   return score;
                 }
-              '
+              |
+
+    #处理map后values为为单一元素的情况
     finalize = %| function(key, value){
-                    if(typeof value == 'object')
-                      value = 1
+                    var off_days;
+                    if(typeof value == 'object'){
+                      off_days = parseInt((now-value)/#{divisor});
+                      value = (#{period_length}-off_days);
+                    }
                     return value;
                   }
                 |
     map_reduce(map, reduce).finalize(finalize).out(inline: true)
   end
 
-  #
-  def self.get_week_hot_topic
-      unless $redis.exists 'week_hot_topic'
-        topic_with_score = self.get_week_hot_topic_from_mongodb.map{|reply| [reply['values'], reply['_id']]}
-        $redis.zadd 'week_hot_topic', topic_with_score
-        $redis.expire 'week_hot_topic', 3600
-      end
-    hot_topic_ids = $redis.zrevrange 'week_hot_topic', 0, -1
+  #得到特定时间段内的热门帖子并缓存到redis，并返回热门topic的数组
+  #redis_key: redis 缓存的key值
+  #redis_expire： redis 缓存的过期时间
+  def self.get_hot_topic(period)
+    redis_key = "#{period}_hot_topic"
+    redis_expire = case period
+                     when 'week' then
+                       3600
+                     when 'day' then
+                       600
+                   end
+    unless $redis.exists redis_key
+      topic_with_score = self.where(:created_at.gt => 1.send(period.to_sym).ago).get_hot_topic_from_mongodb(period).map { |reply| [reply['value'], reply['_id']] }
+
+      $redis.zadd redis_key, topic_with_score
+      $redis.expire redis_key, redis_expire
+    end
+    hot_topic_ids = $redis.zrevrange 'week_hot_topic', 0, 4
     Topic.find(hot_topic_ids).to_a
   end
 end

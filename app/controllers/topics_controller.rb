@@ -12,6 +12,9 @@ class TopicsController < ApplicationController
     @topics = @topics.fields_for_list.includes(:user)
     @topics = @topics.paginate(page: params[:page], per_page: 15, total_entries: 1500)
 
+    @week_hot_topics = Reply.get_hot_topic('week')
+    @day_hot_topics = Reply.get_hot_topic('day')
+
     set_seo_meta t("menu.topics"), "#{Setting.app_name}#{t("menu.topics")}"
   end
 

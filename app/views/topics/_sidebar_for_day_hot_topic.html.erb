@@ -1,0 +1,10 @@
+<% cache(@day_hot_topics) do %>
+<div class="totals box">
+  <h2 class="title"><%= t("common.day_hot_topic")%></h2>
+  <ul>
+    <% @day_hot_topics.each do |topic| %>
+      <li><%= link_to(truncate(topic.title, length: 20), topic_path(topic), title: topic.title) %></li>
+    <% end %>
+  </ul>
+</div>
+<% end %>
