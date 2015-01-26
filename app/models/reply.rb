@@ -163,7 +163,7 @@ class Reply
       $redis.zadd redis_key, topic_with_score
       $redis.expire redis_key, redis_expire
     end
-    hot_topic_ids = $redis.zrevrange 'week_hot_topic', 0, 4
+    hot_topic_ids = $redis.zrevrange redis_key, 0, 4
     Topic.find(hot_topic_ids).to_a
   end
 end
